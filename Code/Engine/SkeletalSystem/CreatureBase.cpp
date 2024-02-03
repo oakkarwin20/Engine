@@ -55,13 +55,13 @@ void CreatureBase::CreateChildSkeletalSystem( std::string const& name, Vec3 cons
 
 
 //----------------------------------------------------------------------------------------------------------------------
-void CreatureBase::CreateLimbsForIKChain( std::string const& nameOfSkeletalSystem, float numLimbs, float limbLength, JointConstraintType const& jointConstraintType, FloatRange const& yawConstraints, FloatRange const& pitchConstraints, FloatRange const& rollConstraints )
+void CreatureBase::CreateLimbsForIKChain( std::string const& nameOfSkeletalSystem, float numLimbs, float limbLength, Vec3 jointFwdDir, JointConstraintType const& jointConstraintType, FloatRange const& yawConstraints, FloatRange const& pitchConstraints, FloatRange const& rollConstraints )
 {
 	 IK_Chain3D* skeleton	= GetSkeletonByName( nameOfSkeletalSystem );
 	 int limbListSize		= int( skeleton->m_jointList.size() );
 	 for ( int i = 0; i < numLimbs; i++ )
 	 {
-		 skeleton->CreateNewLimb( (limbListSize + i), limbLength, Vec3( 1.0f, 0.0f, 0.0f ), jointConstraintType, nullptr, yawConstraints, pitchConstraints, rollConstraints );
+		 skeleton->CreateNewLimb( (limbListSize + i), limbLength, jointFwdDir, jointConstraintType, nullptr, yawConstraints, pitchConstraints, rollConstraints );
 	 }
 	 skeleton->m_finalJoint->m_solveSingleStep_Forwards = true;
 }
@@ -157,8 +157,8 @@ bool CreatureBase::IsLimbTooFarFromPos( IK_Chain3D* const currentLimb, Vec3 cons
 		maxDist = currentLimb->GetMaxLengthOfSkeleton();
 	}
 	// Check if limb is placed too far from Root
-	float distLimbEndToRootSq	= GetDistance3D( currentLimb->m_target.m_currentPos, refPosition );
-	if ( distLimbEndToRootSq > maxDist )
+	float distLimbEndToRoot	= GetDistance3D( currentLimb->m_target.m_currentPos, refPosition );
+	if ( distLimbEndToRoot > maxDist )
 	{
 		return true;
 	}

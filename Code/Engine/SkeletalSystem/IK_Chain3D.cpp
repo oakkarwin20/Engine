@@ -10,9 +10,9 @@
 //----------------------------------------------------------------------------------------------------------------------
 IK_Chain3D::IK_Chain3D( std::string name, Vec3 localOffsetToRoot, IK_Joint3D* ownerSkeletonFirstJoint, CreatureBase* const creatureOwner, bool shouldReachInsteadOfDrag )
 {
-	m_name						= name;
-	m_ownerSkeletonFirstJoint	= ownerSkeletonFirstJoint;
-	m_creatureOwner				= creatureOwner;
+	m_name							= name;
+	m_ownerSkeletonFirstJoint		= ownerSkeletonFirstJoint;
+	m_creatureOwner					= creatureOwner;
 	m_position_WS					= localOffsetToRoot;
 	if ( m_ownerSkeletonFirstJoint != nullptr )
 	{
@@ -263,9 +263,9 @@ void IK_Chain3D::RenderTarget_IJK( std::vector<Vertex_PCU>& verts, float endPosL
 
 
 //----------------------------------------------------------------------------------------------------------------------
-void IK_Chain3D::RenderTarget_EE( std::vector<Vertex_PCU>& verts ) const
+void IK_Chain3D::RenderTarget_EE( std::vector<Vertex_PCU>& verts, float radius /*= 2.0f*/) const
 {
-	AddVertsForSphere3D( verts, m_target.m_currentPos, 2.0f, 8.0f, 8.0f, m_target.m_color );
+	AddVertsForSphere3D( verts, m_target.m_currentPos, radius, 8.0f, 8.0f, m_target.m_color );
 }
 
 
@@ -632,9 +632,11 @@ void IK_Chain3D::DebugTextConstraints_YPR( std::vector<Vertex_PCU>& verts, float
 //----------------------------------------------------------------------------------------------------------------------
 void IK_Chain3D::Solve_CCD( Target target )
 {
-	float tolerance		 = 0.01f;
-	int	  numIterations  = 1;
+	bool  wereChainsReset		= false;
+	float tolerance				= 0.01f;
+	int	  numIterations			= 5;
 	UpdateDistEeToTarget_ALSO_CHECK_IfDistChangedSinceLastFrame( target );
+	m_bestDistSolvedThisFrame	= m_distEeToTarget;
 	for ( int i = 0; i < numIterations; i++ )
 	{
 // 		if ( m_distEeToTarget < tolerance )
@@ -653,23 +655,62 @@ void IK_Chain3D::Solve_CCD( Target target )
 		{
 			if ( m_distEeToTarget > tolerance )
 			{
-				if ( m_firstJoint->m_eulerAngles_LS.m_yawDegrees >= m_firstJoint->m_yawConstraints_LS.m_max ||
-					 m_firstJoint->m_eulerAngles_LS.m_yawDegrees <= m_firstJoint->m_yawConstraints_LS.m_min )
+				if ( m_distEeToTarget > 5.0f )
 				{
-					if ( i < numIterations && numIterations > 1 )
+					if ( IsAnyJointBentToMaxConstraints() )
 					{
-						// 1. Only reset all joints' euler if firstJoint is fully constrained	AND
-						// 2. distEeToTarget has NOT changed since the last iteration/frame		AND
-						// 3. we are still too far away (than tolerance)						AND
-						// 4. this is NOT the last iteration (to avoid rendering a perfectly)
-						// straight IK_Chain
-						ResetAllJointsEuler();
+						if ( i < (numIterations - 1))
+						{
+							if ( !wereChainsReset )
+							{
+								// 1. Only reset ANY joints' euler is fully constrained					AND
+								// 2. distEeToTarget has NOT changed since the last iteration/frame		AND
+								// 3. we are still too far away (than tolerance)						AND
+								// 4. this is NOT the last iteration (avoid rendering a straight chain )
+								ResetAllJointsEuler();
+								wereChainsReset = true;
+							}
+						}
 					}
 				}
 			}
 		}
 	}
+
+	//----------------------------------------------------------------------------------------------------------------------
+	// Once CCD solve is done, check if new solution brought us closer to target
+	// if distance is worse, then disregard new solution and keep the best solution found this frame
+	//----------------------------------------------------------------------------------------------------------------------
+	if ( m_bestDistSolvedThisFrame < m_distEeToTarget )
+	{
+		if ( wereChainsReset )
+		{
+			// Replace all joints' euler with previous solution
+			for ( int i = 0; i < m_jointList.size(); i++ )
+			{
+				// Update both versions of euler to have the "best" solutions
+				IK_Joint3D* currentJoint			= m_jointList[ i ];
+				currentJoint->m_eulerAngles_LS		= currentJoint->m_eulerCloserToTarget;
+			}
+		}
+	}
+	else
+	{
+		// Update closer solutions
+		// Replace all joints' euler with previous solution
+		for ( int i = 0; i < m_jointList.size(); i++ )
+		{
+			// Update both versions of euler to have the "best" solutions
+			IK_Joint3D* currentJoint			= m_jointList[ i ];
+			currentJoint->m_eulerCloserToTarget = currentJoint->m_eulerAngles_LS;
+		}
+	}
+	float distEndOfFrame = GetDistEeToTarget( target );
+
+	// Update target position to keep data fresh
 	m_targetPos_LastFrame = target.m_currentPos;
+
+	m_bestDistSolvedThisFrame = 99999.9f;
 }
 
 
@@ -678,17 +719,20 @@ void IK_Chain3D::Solve_CCD( Target target )
 //----------------------------------------------------------------------------------------------------------------------
 void IK_Chain3D::CCD_Forward( Target target )
 {
-	int numLimbs = ( int( m_jointList.size() ) - 1 );
+	float distBeforeSolve_eeToTarget = GetDistEeToTarget( target );
+	int	  numLimbs	= ( int( m_jointList.size() ) - 1 );
 	for ( int i = numLimbs; i >= 0; i-- )
 	{
 		IK_Joint3D* currentJoint = m_jointList[ i ];
 		if ( currentJoint == m_finalJoint )
 		{
-			// Skip the final joint
-			UpdateDistEeToTarget_ALSO_CHECK_IfDistChangedSinceLastFrame( target );
+			// Skip the final joint (end effector)
 			continue;
 		}
 
+		//----------------------------------------------------------------------------------------------------------------------
+		// Main solver logic
+		//----------------------------------------------------------------------------------------------------------------------
 		if ( currentJoint->m_parent == nullptr )
 		{
  			//----------------------------------------------------------------------------------------------------------------------
@@ -770,6 +814,16 @@ void IK_Chain3D::CCD_Forward( Target target )
   			currentJoint->m_eulerAngles_LS.GetAsVectors_XFwd_YLeft_ZUp( currentJoint->m_fwdDir, currentJoint->m_leftDir, currentJoint->m_upDir );
   			int brainCells = 0;
 		}
+	}
+
+	//----------------------------------------------------------------------------------------------------------------------
+	// Keep track of best solution achieved this frame
+	//----------------------------------------------------------------------------------------------------------------------
+	float distAfterSolve_eeToTarget = GetDistEeToTarget( target );
+	if ( distAfterSolve_eeToTarget < m_bestDistSolvedThisFrame )
+	{
+		// Update best solved dist if found
+		m_bestDistSolvedThisFrame = distAfterSolve_eeToTarget;
 	}
 }
 
@@ -2108,20 +2162,6 @@ void IK_Chain3D::ComputeBendAngle_Cos_Sine( IK_Joint3D* const limbA, IK_Joint3D*
 	limbA->m_axisOfRotation		= limbA->m_leftDir;	
 }
 
-
-//----------------------------------------------------------------------------------------------------------------------
-float IK_Chain3D::GetMaxLengthOfSkeleton()
-{
-	float totalLength = 0.0f;
-	for ( int i = 0; i < m_jointList.size(); i++ )
-	{
-		IK_Joint3D const* currentSegment = m_jointList[ i ];
-		totalLength += currentSegment->m_distToChild;
-	}
-	return totalLength;
-}
-
-
 //----------------------------------------------------------------------------------------------------------------------
 bool IK_Chain3D::CanMove()
 {
@@ -2189,6 +2229,72 @@ bool IK_Chain3D::TryUnlockAndToggleAnchor( IK_Chain3D* const refSkeleton, bool d
 		return true;
 	}
 	return false;
+}
+
+
+//----------------------------------------------------------------------------------------------------------------------
+bool IK_Chain3D::UpdateDistEeToTarget_ALSO_CHECK_IfDistChangedSinceLastFrame( Target target )
+{
+	// Update distEeToTarget after each solve
+	// 	Vec3 eePos_WS		= m_finalJoint->GetMatrix_ModelToWorld().GetTranslation3D();
+	// 	Vec3 dispEeToTarget	= target.m_currentPos - eePos_WS;
+	// 	m_distEeToTarget	= dispEeToTarget.GetLength();
+
+	float newDist = GetDistEeToTarget( target );
+	// Check if distance has changed between each solve
+	bool distHasChanged = true;
+	if ( CompareIfFloatsAreEqual( newDist, m_distEeToTarget, 0.000000001f ) )
+	{
+		distHasChanged = false;
+	}
+	m_distEeToTarget	= newDist;
+	return distHasChanged;
+}
+
+
+//----------------------------------------------------------------------------------------------------------------------
+bool IK_Chain3D::IsAnyJointBentToMaxConstraints()
+{
+	for ( int i = 0; i < m_jointList.size(); i++ )
+	{
+		IK_Joint3D* currentJoint = m_jointList[i];
+		// Yaw
+		if  ( currentJoint->m_eulerAngles_LS.m_yawDegrees >= currentJoint->m_yawConstraints_LS.m_max ||
+			  currentJoint->m_eulerAngles_LS.m_yawDegrees <= currentJoint->m_yawConstraints_LS.m_min	
+			)
+		{
+			// Don't consider this joint as clamped if it has no degrees of freedom for yaw
+			if ( currentJoint->m_yawConstraints_LS.m_min != currentJoint->m_yawConstraints_LS.m_max )
+			{
+				return true;
+			}
+		}
+		// Pitch
+		if  ( currentJoint->m_eulerAngles_LS.m_pitchDegrees >= currentJoint->m_pitchConstraints_LS.m_max ||
+			  currentJoint->m_eulerAngles_LS.m_pitchDegrees	<= currentJoint->m_pitchConstraints_LS.m_min	
+			)
+		{
+			// Don't consider this joint as clamped if it has no degrees of freedom for pitch 
+			if ( currentJoint->m_pitchConstraints_LS.m_min != currentJoint->m_pitchConstraints_LS.m_max )
+			{
+				return true;
+			}
+		}			
+	}
+	return false;
+}
+
+
+//----------------------------------------------------------------------------------------------------------------------
+float IK_Chain3D::GetMaxLengthOfSkeleton()
+{
+	float totalLength = 0.0f;
+	for ( int i = 0; i < m_jointList.size(); i++ )
+	{
+		IK_Joint3D const* currentSegment = m_jointList[ i ];
+		totalLength += currentSegment->m_distToChild;
+	}
+	return totalLength;
 }
 
 
@@ -2267,7 +2373,7 @@ EulerAngles IK_Chain3D::GetEulerFromFwdDir( IK_Joint3D* curJoint, Vec3 const& fw
 // 		newEulerAngles = EulerAngles( yawDegrees_y, pitchDegrees_y, rollDegrees_y );
 
 		//----------------------------------------------------------------------------------------------------------------------
-		// 1. Compute both cases of YPR
+		// 1. Compute both cases of YPR (yawPreferred & pitchPreferred)
 		// 2. Compute and choose "nearest" euler
 		// 3. Compare both cases of euler and choose most similar to prevEuler solution
 		//----------------------------------------------------------------------------------------------------------------------
@@ -2279,157 +2385,111 @@ EulerAngles IK_Chain3D::GetEulerFromFwdDir( IK_Joint3D* curJoint, Vec3 const& fw
 		float pitchDegrees_p	= pitchDegrees_y;
  		if ( sign < 0.0f )
  		{
-// 			if ( curJoint->m_pitchConstraints_LS.m_max >=  90.0f ||
-// 				curJoint->m_pitchConstraints_LS.m_min <= -90.0f )
- 			{
-				// Re-compute pitch calculations
-				projectedFwdOnPlaneXY  *= -1.0f;
-				yawDegrees_p			= yawDegrees_y;
-				pitchDegrees_p			= Atan2Degrees( -fwdDir.z, projectedFwdOnPlaneXY );
-				if ( yawDegrees_y >= 90.0f )
-				{
-					yawDegrees_p -= 180.0f;
-				}
-				else if ( yawDegrees_y <= -90.0f )
-				{
-					yawDegrees_p += 180.0f;
-				}
-			}
-		}
- 		// 2. Compute and choose "nearest" euler
-		//	  "_y" means "yawPreferred" 
-		//	  "_p" means "pitchPreferred"
-		EulerAngles yawPreferredEuler	= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
- 		EulerAngles pitchPreferredEuler = EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
-		float absYawDif_y	= fabsf( m_prevEuler_LastFrame.m_yawDegrees	  ) - fabsf( yawPreferredEuler.m_yawDegrees		);	 
-		float absPitchDif_y = fabsf( m_prevEuler_LastFrame.m_pitchDegrees ) - fabsf( yawPreferredEuler.m_pitchDegrees	);	 
-		float absYawPitch_p	= fabsf( m_prevEuler_LastFrame.m_yawDegrees	  ) - fabsf( pitchPreferredEuler.m_yawDegrees	);   
-		float absPitchDif_p = fabsf( m_prevEuler_LastFrame.m_pitchDegrees ) - fabsf( pitchPreferredEuler.m_pitchDegrees ); 
-		float totalDif_y	= fabsf( absYawDif_y )	 + fabsf( absPitchDif_y );
-		float totalDif_p	= fabsf( absYawPitch_p ) + fabsf( absPitchDif_p );
-		// 3. Compare both cases of euler and choose most similar to prevEuler solution
- 		if ( totalDif_y <= totalDif_p )
- 		{
- 			// yaw preferred solution is more similar
- 			newEulerAngles			= yawPreferredEuler;
-			m_prevEuler_LastFrame	= newEulerAngles;
- 		}
- 		else if ( totalDif_y > totalDif_p )
-		{
- 			// pitch preferred solution is more similar
- 			newEulerAngles			= pitchPreferredEuler;
-			m_prevEuler_LastFrame	= newEulerAngles;
- 		}
- 		else
- 		{
-			// This case should never get triggered?
-			int brainCells = 0;
- 		}
-
-		// 		// 2. Convert YPR to vectors
-// 		EulerAngles yawPreferredEuler	= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
-// 		EulerAngles pitchPreferredEuler = EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
-// 		Vec3 fwd_y, left_y, up_y;
-// 		Vec3 fwd_p, left_p, up_p;
-// 		  yawPreferredEuler.GetAsVectors_XFwd_YLeft_ZUp( fwd_y, left_y, up_y );
-// 		pitchPreferredEuler.GetAsVectors_XFwd_YLeft_ZUp( fwd_p, left_p, up_p );
-// 		// 3. Dot product vectors to prev solution
-// 		float similarity_y = DotProduct3D( m_prevLeftDir_lastFrame, left_y );
-// 		float similarity_p = DotProduct3D( m_prevLeftDir_lastFrame, left_p );
-// 		// 4. Return euler most "similar" to prev solution
-// 		if ( fabsf(similarity_y) > fabsf(similarity_p) )
-// 		{
-// 			// yaw preferred solution is more similar
-// 			newEulerAngles			= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
-// 			m_prevLeftDir_lastFrame = left_y;
-// 		}
-// 		else
-// 		{
-// 			// pitch preferred solution is more similar
-// 			newEulerAngles			= EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
-// 			m_prevLeftDir_lastFrame = left_p;
-// 		}
-	}
-	return newEulerAngles;
-}
-
-
-//----------------------------------------------------------------------------------------------------------------------
-EulerAngles IK_Chain3D::GetEulerFromFwdAndLeft( Vec3 const& fwdDir, Vec3 const& leftDir )
-{
-	EulerAngles newEulerAngles( 0.0f, 0.0f, 0.0f );
-	float sign = 1.0f;
-	if ( fwdDir.x < 0.0f )
-	{
-		// Note: If fwd dir is facing negative X, we need flip sign of our length since our 
-		//		 distance calculations makes us lose the sign by squaring both numbers, thus
-		//		 lead to incorrect results
-		sign = -1.0f;
-	}
-	float fwdLengthAlongAxisXY	= sqrtf( ( fwdDir.x * fwdDir.x ) + ( fwdDir.y * fwdDir.y ) );
-	fwdLengthAlongAxisXY		*= sign;
-	bool  isFacingWorldZ		= CompareIfFloatsAreEqual( fwdLengthAlongAxisXY, 0.0f, 0.0001f );
-	if ( isFacingWorldZ )
-	{
-		// Handle Gimble lock edge case
-		// This issue occurs when our "fwdDir" is facing world -Z or Z+
-		// Since Y is around the "world" Z axis and not the "kBasis", this issue occurs.
-		// When this happens, we need to compute EulerAngles from our dirVectors differently
-		float yawDegrees	= 0.0f;
-		float pitchDegrees	= Atan2Degrees( -fwdDir.z, fwdLengthAlongAxisXY );
-		Vec3 upKbasis		= CrossProduct3D( fwdDir, leftDir );
-		upKbasis.Normalize();
-		float rollDegrees	= Atan2Degrees( -upKbasis.y, leftDir.y );
-		newEulerAngles		= EulerAngles( yawDegrees, pitchDegrees, rollDegrees );
-	}
-	else
-	{
-		float yawDegrees	= Atan2Degrees(  fwdDir.y, fwdDir.x );
-		float pitchDegrees	= Atan2Degrees( -fwdDir.z, fwdLengthAlongAxisXY );
-		Vec3 upKbasis		= CrossProduct3D( fwdDir, leftDir );
-		upKbasis.Normalize();
-		float rollDegrees	= Atan2Degrees( leftDir.z, upKbasis.z );
-		
-		// Prefer pitch yaw over pitch
-		if ( sign < 0.0f )
-		{
-			if ( fabsf( pitchDegrees ) >= 90.0f )
+			// Re-compute pitch calculations
+			projectedFwdOnPlaneXY  *= -1.0f;
+			yawDegrees_p			= yawDegrees_y;
+			pitchDegrees_p			= Atan2Degrees( -fwdDir.z, projectedFwdOnPlaneXY );
+			if ( yawDegrees_y >= 90.0f )
 			{
-				if ( yawDegrees >= 90.0f )
-				{
-					yawDegrees -= 180.0f;
-				}
-				else if ( yawDegrees <= -90.0f )
-				{
-					yawDegrees += 180.0f;
-				}
+				yawDegrees_p -= 180.0f;
+			}
+			else if ( yawDegrees_y <= -90.0f )
+			{
+				yawDegrees_p += 180.0f;
 			}
 		}
-		newEulerAngles = EulerAngles( yawDegrees, pitchDegrees, rollDegrees );
+//  		// 2. Compute and choose "nearest" euler (Euler comparison)
+// 		//	  "_y" means "yawPreferred" 
+// 		//	  "_p" means "pitchPreferred"
+// 		EulerAngles yawPreferredEuler	= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
+//  		EulerAngles pitchPreferredEuler = EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
+//  		float absYawDif_y	= fabsf( m_prevEuler_LastFrame.m_yawDegrees	  ) - fabsf( yawPreferredEuler.m_yawDegrees		);	 
+//  		float absPitchDif_y = fabsf( m_prevEuler_LastFrame.m_pitchDegrees ) - fabsf( yawPreferredEuler.m_pitchDegrees	);	 
+//  		float absYawPitch_p	= fabsf( m_prevEuler_LastFrame.m_yawDegrees	  ) - fabsf( pitchPreferredEuler.m_yawDegrees	);   
+//  		float absPitchDif_p = fabsf( m_prevEuler_LastFrame.m_pitchDegrees ) - fabsf( pitchPreferredEuler.m_pitchDegrees ); 
+//  		float totalDif_y	= fabsf( absYawDif_y )	 + fabsf( absPitchDif_y );
+//  		float totalDif_p	= fabsf( absYawPitch_p ) + fabsf( absPitchDif_p );
+//  		// 3. Compare both cases of euler and choose most similar to prevEuler solution
+//   		if ( totalDif_y <= totalDif_p )
+//   		{
+//   			// yaw preferred solution is more similar
+//   			newEulerAngles			= yawPreferredEuler;
+//  			m_prevEuler_LastFrame	= newEulerAngles;
+//   		}
+//   		else if ( totalDif_y > totalDif_p )
+//  		{
+//   			// pitch preferred solution is more similar
+//   			newEulerAngles			= pitchPreferredEuler;
+//  			m_prevEuler_LastFrame	= newEulerAngles;
+//   		}
+//   		else
+//   		{
+//  			// This case should never get triggered?
+//  			int brainCells = 0;
+//   		}
+
+
+		//----------------------------------------------------------------------------------------------------------------------
+ 		// 2. Convert YPR to vectors (leftDir AND upDir comparison)
+		//----------------------------------------------------------------------------------------------------------------------
+ 		EulerAngles yawPreferredEuler	= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
+ 		EulerAngles pitchPreferredEuler = EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
+ 		Vec3 fwd_y, left_y, up_y;
+ 		Vec3 fwd_p, left_p, up_p;
+ 		  yawPreferredEuler.GetAsVectors_XFwd_YLeft_ZUp( fwd_y, left_y, up_y );
+ 		pitchPreferredEuler.GetAsVectors_XFwd_YLeft_ZUp( fwd_p, left_p, up_p );
+ 		// 3. Dot product vectors to prev solution
+ 		float leftSimilarity_y	= DotProduct3D( curJoint->m_leftDir_lastFrame, left_y );
+ 		float leftSimilarity_p	= DotProduct3D( curJoint->m_leftDir_lastFrame, left_p );
+ 		float upSimilarity_y	= DotProduct3D( curJoint->m_upDir_lastFrame,   up_y	);
+ 		float upSimilarity_p	= DotProduct3D( curJoint->m_upDir_lastFrame,   up_p	);
+ 		// 4. Return euler most "similar" to prev solution
+ 		// Yaw is preferred
+		if ( leftSimilarity_y >= leftSimilarity_p )
+		{
+ 			if ( upSimilarity_y >= upSimilarity_p )
+ 			{
+ 				// yawPreferred solution is more similar to the newLeft and newUp 
+ 				newEulerAngles					= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
+ 				curJoint->m_leftDir_lastFrame	= left_y;
+				curJoint->m_upDir_lastFrame		= up_y;
+				curJoint->m_euler_LastFrame		= newEulerAngles;
+ 			}
+ 			else if ( upSimilarity_y < upSimilarity_p )
+ 			{
+				// pitchPreferred solution is more similar to the newLeft and newUp 
+				newEulerAngles					= EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
+ 				curJoint->m_leftDir_lastFrame	= left_p;
+ 				curJoint->m_upDir_lastFrame		= up_p;
+ 				curJoint->m_euler_LastFrame		= newEulerAngles;
+ 			}
+ 		}
+		// Pitch is preferred
+ 		else if ( leftSimilarity_y < leftSimilarity_p  )
+ 		{
+			if ( upSimilarity_y >= upSimilarity_p )
+			{
+				// yawPreferred solution is more similar to the newLeft and newUp 
+				newEulerAngles					= EulerAngles( yawDegrees_y, pitchDegrees_y, 0.0f );
+				curJoint->m_leftDir_lastFrame	= left_y;
+				curJoint->m_upDir_lastFrame		= up_y;
+				curJoint->m_euler_LastFrame		= newEulerAngles;
+			}
+			else if ( upSimilarity_y < upSimilarity_p )
+			{
+				// pitchPreferred solution is more similar to the newLeft and newUp 
+				newEulerAngles					= EulerAngles( yawDegrees_p, pitchDegrees_p, 0.0f );
+				curJoint->m_leftDir_lastFrame	= left_p;
+				curJoint->m_upDir_lastFrame		= up_p;
+				curJoint->m_euler_LastFrame		= newEulerAngles;
+			}
+ 		}
+		else
+		{
+			int brainCells = 0;
+		}
 	}
 	return newEulerAngles;
-}
-
-
-//----------------------------------------------------------------------------------------------------------------------
-bool IK_Chain3D::UpdateDistEeToTarget_ALSO_CHECK_IfDistChangedSinceLastFrame( Target target )
-{
-	// Update distEeToTarget after each solve
-// 	Vec3 eePos_WS		= m_finalJoint->GetMatrix_ModelToWorld().GetTranslation3D();
-// 	Vec3 dispEeToTarget	= target.m_currentPos - eePos_WS;
-// 	m_distEeToTarget	= dispEeToTarget.GetLength();
-
-	Vec3 eePos_WS		= m_finalJoint->GetMatrix_ModelToWorld().GetTranslation3D();
-	Vec3 dispEeToTarget	= target.m_currentPos - eePos_WS;
-	float newDist		= dispEeToTarget.GetLength();
-	// Check if distance has changed between each solve
-	bool distHasChanged = true;
-	if ( CompareIfFloatsAreEqual( newDist, m_distEeToTarget, 0.001f ) )
-	{
-		distHasChanged = false;
-	}
-	m_distEeToTarget	= newDist;
-	return distHasChanged;
 }
 
 
@@ -2439,9 +2499,19 @@ void IK_Chain3D::ResetAllJointsEuler()
 	// Reset all joint euler to (0,0,0)
 	for ( int i = 0; i < m_jointList.size(); i++ )
 	{
-		IK_Joint3D* currentJoint = m_jointList[ i ];
+		IK_Joint3D* currentJoint	   = m_jointList[ i ];
 		currentJoint->m_eulerAngles_LS = EulerAngles();
 	}
+}
+
+
+//----------------------------------------------------------------------------------------------------------------------
+float IK_Chain3D::GetDistEeToTarget( Target target )
+{
+	Vec3 eePos_WS		= m_finalJoint->GetMatrix_ModelToWorld().GetTranslation3D();
+	Vec3 dispEeToTarget	= target.m_currentPos - eePos_WS;
+	float newDist		= dispEeToTarget.GetLength();
+	return newDist;
 }
 
 

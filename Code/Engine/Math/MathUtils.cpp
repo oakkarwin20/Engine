@@ -1707,17 +1707,20 @@ float RangeMap(float valueToConvert, float originalRangeStart, float originalRan
 }
 
 //----------------------------------------------------------------------------------------------------------------------
+// Note: InStart and InEnd can only vary from (lower - higher) ranges
+// Logic is broke for (higher - lower) ranges
+//----------------------------------------------------------------------------------------------------------------------
 float RangeMapClamped(float inValue, float inStart, float inEnd, float outStart, float outEnd)
 {
-	if (inValue <= inStart)
+	if ( inValue <= inStart )
 	{
 		return outStart;
 	}
-	else if (inValue >= inEnd)
+	else if ( inValue >= inEnd )
 	{
 		return outEnd;
 	}
-	
+
 	float rangeMap = RangeMap( inValue, inStart, inEnd, outStart, outEnd );
 
 	return rangeMap;

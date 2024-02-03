@@ -25,13 +25,14 @@ public:
 
 	// Initialization Functions
 	void CreateChildSkeletalSystem	 ( std::string const& name, Vec3 const& localOffsetToRoot,  IK_Joint3D* ownerSkeletonFirstJoint = nullptr, CreatureBase* const creatureOwner = nullptr, bool shouldReachInsteadOfDrag = true );
-	void CreateLimbsForIKChain		 ( std::string const& nameOfSkeletalSystem,
-									 						float numLimbs, 
-									 						float limbLength = 1.0f, 
-									 						JointConstraintType const& jointConstraintType = JOINT_CONSTRAINT_TYPE_DISTANCE,
-									 						FloatRange const& yawConstraints   = FloatRange( -180.0f, 180.0f ),
-									 						FloatRange const& pitchConstraints = FloatRange( -180.0f, 180.0f ),
-									 						FloatRange const& rollConstraints  = FloatRange( -180.0f, 180.0f ) );
+	void CreateLimbsForIKChain		 ( std::string			const&	nameOfSkeletalSystem,
+									   float						numLimbs, 
+									   float						limbLength			= 1.0f, 
+									   Vec3							jointFwdDir			= Vec3::X_FWD,
+									   JointConstraintType	const&	jointConstraintType = JOINT_CONSTRAINT_TYPE_DISTANCE,
+									   FloatRange			const&	yawConstraints		= FloatRange( -180.0f, 180.0f ),
+									   FloatRange			const&	pitchConstraints	= FloatRange( -180.0f, 180.0f ),
+									   FloatRange			const&	rollConstraints		= FloatRange( -180.0f, 180.0f ) );
 	
 	// Util Functions
 	IK_Chain3D*	GetSkeletonByName			( std::string const& nameOfSkeletalSystem );

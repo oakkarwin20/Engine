@@ -101,7 +101,7 @@ public:
 
 	// Render Functions
 	void RenderTarget_IJK					( std::vector<Vertex_PCU>& verts, float endPosLength )																		const;
-	void RenderTarget_EE					( std::vector<Vertex_PCU>& verts )																							const;
+	void RenderTarget_EE					( std::vector<Vertex_PCU>& verts, float radius = 2.0f )																		const;
 	void DebugDrawJoints_IJK				( std::vector<Vertex_PCU>& verts, float arrowThickness = 0.1f, float endPosLength = 3.0f )									const;
 	void DebugDrawConstraints_YPR			( std::vector<Vertex_PCU>& verts, float length )																			const;
 	void DebugDrawParentBasis				( std::vector<Vertex_PCU>& verts, float length = 4.0f )																		const;
@@ -152,16 +152,22 @@ public:
 	void	ComputeBendAngle_Cos_Sine( IK_Joint3D* const limbA, IK_Joint3D* const limbB, Target target, Vec3 const& limbStartPos );
 
 	//----------------------------------------------------------------------------------------------------------------------
+	// Queries
+	//----------------------------------------------------------------------------------------------------------------------
+	bool		CanMove();
+	bool		TryUnlockAndToggleAnchor( IK_Chain3D* const refSkeleton, bool didRayImpact = false, Vec3 const& updatedRayImpactPos = Vec3::ZERO );		// GenericRefactoring
+	bool		UpdateDistEeToTarget_ALSO_CHECK_IfDistChangedSinceLastFrame( Target target );
+	bool		IsAnyJointBentToMaxConstraints();
+
+	//----------------------------------------------------------------------------------------------------------------------
 	// Util Functions
 	//----------------------------------------------------------------------------------------------------------------------
 	float		GetMaxLengthOfSkeleton();
-	bool		CanMove();
-	bool		TryUnlockAndToggleAnchor( IK_Chain3D* const refSkeleton, bool didRayImpact = false, Vec3 const& updatedRayImpactPos = Vec3::ZERO );		// GenericRefactoring
 	void		UpdateTargetOrientationToRef( Vec3 const& fwd, Vec3 const& left, Vec3 const& up );
 	EulerAngles	GetEulerFromFwdDir( IK_Joint3D* curJoint, Vec3 const& fwdDir );
 	EulerAngles	GetEulerFromFwdAndLeft( Vec3 const& fwdDir, Vec3 const& leftDir );
-	bool		UpdateDistEeToTarget_ALSO_CHECK_IfDistChangedSinceLastFrame( Target target );
 	void		ResetAllJointsEuler();
+	float		GetDistEeToTarget( Target target );
 
 	//----------------------------------------------------------------------------------------------------------------------
 	// Matrix Util transform functions
@@ -196,9 +202,6 @@ public:
 	IK_Chain3D*					m_parentChain					= nullptr;
 	bool						m_shouldRender					= true;
 	float						m_distEeToTarget				= 99999.9f;
-	// Basis flipping
-	Vec3 m_prevLeftDir_lastFrame = Vec3::Y_LEFT;
-	EulerAngles m_prevEuler_LastFrame = EulerAngles();
 
 	// End Effector
 	Target		m_target;
@@ -220,4 +223,6 @@ public:
 	bool m_breakFABRIK			= false;
 
 	ChainSolveType m_solverType = CHAIN_SOLVER_FABRIK;
+
+	float m_bestDistSolvedThisFrame = 0.0f;
 };

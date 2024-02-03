@@ -2,6 +2,7 @@
 #include "Engine/Math/MathUtils.hpp"
 #include "Engine/Core/EngineCommon.hpp"
 
+
 //----------------------------------------------------------------------------------------------------------------------
 AABB3 AABB3::ZERO_TO_ONE = AABB3( 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f );
 
@@ -80,6 +81,7 @@ Vec3 const AABB3::GetNearestPoint( Vec3 const& referencePosition ) const
 	Vec3 nearestPoint	= Vec3( nearestPointX, nearestPointY, nearestPointZ );
 	return nearestPoint;
 }
+
 
 //----------------------------------------------------------------------------------------------------------------------
 void AABB3::SetCenterXY( Vec3 const& newCenter )

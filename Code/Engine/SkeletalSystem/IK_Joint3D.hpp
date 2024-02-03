@@ -119,6 +119,12 @@ public:
 	bool m_solveSingleStep_Forwards  = false;
 	bool m_solveSingleStep_Backwards = false;
 
+	// Basis flipping
+	Vec3		m_leftDir_lastFrame		= Vec3::Y_LEFT;
+	Vec3		m_upDir_lastFrame		= Vec3::Z_UP;
+	EulerAngles m_euler_LastFrame		= EulerAngles();
+	EulerAngles m_eulerCloserToTarget	= EulerAngles();
+
 	//----------------------------------------------------------------------------------------------------------------------
 	// To delete?
 	//----------------------------------------------------------------------------------------------------------------------
